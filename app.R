@@ -6,11 +6,11 @@ library(RColorBrewer)
 library(ggplotify)
 
 source("covid.R")
-maxNStates <- 9
+maxNStates <- 6
 thm <- theme(panel.background = element_rect(color='grey', fill=NA),
              panel.grid=element_line(linetype='dotted', color='lightgrey'),
              strip.background = element_rect(fill=NA,color='grey'),
-             strip.text = element_text(size=14,color='black'),
+             strip.text = element_text(size=14, color='black'),
              axis.text = element_text(size=11, color='black'),
              axis.title.y = element_text(angle=0, size=12, color='black',
                                          vjust=0.66),
@@ -28,7 +28,9 @@ logBreaks <- function(x) {
 }
 logLabels <- function(x) {
   if (max(x, na.rm=T) < 1){
-    return(formatC(10^x, digits=2, format='f'))
+    return(
+      format(signif(10^x, 3), format='f', scientific=FALSE, drop0trailing = TRUE)
+    )
   } else {
     return(c(prettyNum(
       ifelse(x < 1, 10^x, round(10^x)), digits=3, big.mark=','))) 
@@ -36,17 +38,21 @@ logLabels <- function(x) {
 }
 rawBreaks <- function(x){
   nz <- trunc(log10(x[2]))
-  maxSeq <- x[2] %/% (10^nz) * (10^nz)
-  incr <- 10^ nz / 2
-  ret <- c(seq(0, maxSeq, by=incr),
-           signif(x[2], trunc(log10(x[2]))))
+  if (nz <1 ){
+    ret <- signif(seq(0, signif(x[2],1), length.out=6), 2)
+  } else {
+    maxSeq <- x[2] %/% (10^nz) * (10^nz)
+    incr <- 10^ nz / 2
+    ret <- c(seq(0, maxSeq, by=incr),
+             signif(x[2], trunc(log10(x[2]))))
+  }
   if (length(ret) > 8) {
     ret <- ret[unique(seq(1,length(ret),2),length(ret))]
   }
   return(ret)
 } 
 rawLabels <- function(x) return(prettyNum(x, big.mark=','))
-
+fadd <- rep(c(1,1.5,2),each=3)
 
 # Define UI for application that draws a histogram
 ui <- # Use a fluid Bootstrap layout
@@ -62,7 +68,7 @@ ui <- # Use a fluid Bootstrap layout
       sidebarPanel(
         selectInput("response", "Plot:", 
                     choices = respOptions,
-                    selected='Cases per 100,000 people'),
+                    selected='New cases per 1,000 people'),
         
         hr(),
         radioButtons("yscale", "Scale",
@@ -76,7 +82,7 @@ ui <- # Use a fluid Bootstrap layout
                        max = max(dc$date)
         ),
         hr(),
-        selectizeInput("state", "State:", 
+        selectizeInput("state", "Select states:", 
                     choices = sort(statenames),
                     multiple = TRUE, selected=NULL,
                     options=list(maxItems=maxNStates)),
@@ -93,7 +99,7 @@ ui <- # Use a fluid Bootstrap layout
       
       # Create a spot for the barplot
       mainPanel(
-        plotOutput("thePlot", height='750px')
+        plotOutput("thePlot", height='750px', width='800px')
         )
       
     )
@@ -110,19 +116,19 @@ server <- function(input, output) {
                                         length.out=ifelse(ndays < 3, 2,
                                                           ifelse(ndays < 8, 3, 5))),
                            limits= c(input$dateRange[1], input$dateRange[2] +
-                                       ifelse(ndays < 5, 1,
-                                              ifelse(ndays < 9, 2,
-                                                     ifelse(ndays < 20, 3, 5)))))
+                                       ifelse(ndays < 5, 2,
+                                              ifelse(ndays < 9, 3,
+                                                     ifelse(ndays < 20, 3, 6)))))
     nstates <- length(input$state)
-    fadd <- rep(c(1,1.5,2),each=3)
+    
     xscale_facet <- scale_x_date(date_labels = "%b %d",
                                            date_minor_breaks="2 days",
                                            breaks = seq(input$dateRange[1], input$dateRange[2],
                                                         length.out=ifelse(ndays < 3, 2, 3)),
                                            limits= c(input$dateRange[1], input$dateRange[2] +
-                                                       ifelse(ndays < 5, 1,
-                                                              ifelse(ndays < 9, 4,
-                                                                     ifelse(ndays < 20, 5, 6)))*fadd[nstates]))
+                                                       ifelse(ndays < 5, 2,
+                                                              ifelse(ndays < 9, 5,
+                                                                     ifelse(ndays < 20, 5, 7)))*fadd[nstates]))
     stateColScale <- scale_color_manual(values = 
                                           c(setNames(brewer.pal(maxNStates, 
                                                        'Set1'), 
@@ -141,14 +147,39 @@ server <- function(input, output) {
       pldc <- filter(pldc, state %in% input$state)
     } 
     pldcText <-
-      pldc %>% group_by(countystate) %>% filter(date==max(date)) %>% ungroup
+      pldc %>% group_by(countystate) %>% 
+      filter(date==max(date)) %>% ungroup
+      
     if (input$yscale == 'Logarithmic'){
       respvar <- lrespVarMap[input$response]
       yscale <- scale_y_continuous(breaks=logBreaks, labels=logLabels)
+      pldcText$labstate <-
+        paste(str_replace(as.character(pldcText$countystate), ', ', ',\n'),
+              ": ", prettyNum(10^pldcText[[respvar]],
+                              digits=2, big.mark=','), sep='')
+      pldcText$lab_nostate <-
+        paste(pldcText$county, ": ", prettyNum(10^pldcText[[respvar]],
+                              digits=2, big.mark=','), sep='')
+      pldsText$lab <-
+        paste(pldsText$state, ': ',
+              prettyNum(10^pldsText[[respvar]], digits=2, big.mark=','),
+              sep='')
     } else {
       respvar <- respVarMap[input$response]
       yscale <- scale_y_continuous(breaks=rawBreaks, labels=rawLabels)
+      pldcText$labstate <-
+        paste(str_replace(as.character(pldcText$countystate), ', ', ',\n'),
+              ": ", prettyNum(pldcText[[respvar]],
+                              digits=2, big.mark=','), sep='')
+      pldcText$lab_nostate <-
+        paste(pldcText$county, ": ", prettyNum(pldcText[[respvar]],
+                              digits=2, big.mark=','), sep='')
+      pldsText$lab <-
+        paste(pldsText$state, ': ',
+              prettyNum(pldsText[[respvar]], digits=2, big.mark=','),
+              sep='')
     } 
+    
     ps <- 
       plds %>%
       ggplot(aes_string('date', respvar,
@@ -160,41 +191,40 @@ server <- function(input, output) {
     if (is.null(input$state)) {
       pc <- pc + geom_line() +
         geom_text(aes_string('date', respvar,
-                             label='lab'),
+                             label='labstate'),
                   hjust=0,vjust=0.5,size=3,
                   check_overlap = TRUE,
-                  data=pldcText %>% top_n(2, !!sym(respvar)) %>%
-                    mutate(lab = str_replace(as.character(countystate), '\\.',',\n')))
+                  data=pldcText %>% top_n(2, !!sym(respvar)))
       ps <- ps + geom_line() +
         geom_text(aes_string('date',respvar,
-                             label='state'),
+                             label='lab'),
                   check_overlap = TRUE,
-                  hjust=0,vjust=0,size=3.5,
-                  data=top_n(pldsText, 2, !!sym(respvar)))
+                  hjust=0, vjust=0.5, size=3.5,
+                  data = top_n(pldsText, 4, !!sym(respvar)))
     } else {
       pc <- pc +
         geom_line(aes(color=state)) +
         geom_text(aes_string('date',respvar,
-                             label='county'),
-                  hjust=0,vjust=0,size=3.1,
+                             label='lab_nostate'),
+                  hjust=0, vjust = 0.5, size=3.1,
                   check_overlap = TRUE,
-                  data=pldcText %>% group_by(state) %>% top_n(1, !!sym(respvar))) +
+                  data=pldcText %>% group_by(state) %>% top_n(2, !!sym(respvar))) +
         stateColScale + 
         guides(list(color='none'))
       ps <- ps +
         geom_line(aes(color = stateCut, alpha=(stateCut=='other'),
                       size = (stateCut == 'other'))) +
         geom_text(aes_string('date',respvar,
-                             label='state', color='stateCut'),
-                  hjust=0,vjust=0,size=3.5,check_overlap = TRUE,
+                             label='lab', color='stateCut'),
+                  hjust=0,vjust=0.5,size=3.5,check_overlap = TRUE,
                   data = filter(pldsText, state %in% input$state) %>%
-                    top_n(2, !!sym(respvar))) +
+                    top_n(4, !!sym(respvar))) +
         stateColScale + scale_alpha_manual(breaks=c('TRUE','FALSE'),
                                             values=c(1, 1/8)) +
         scale_size_manual(breaks=c('TRUE','FALSE'),
                             values=c(1.5, 0.8)) +
         guides(list(color=guide_legend(override.aes=list(size=3),
-                                       nrow=3,ncol=3,byrow=T),
+                                       nrow=3, ncol=3, sbyrow=T),
                     alpha='none',size='none'))
     }
     pc <- pc +
